@@ -84,11 +84,14 @@ abstract class AppStyle {
     );
   }
 
-  static double getResponsiveFontSize(BuildContext context, {required double fontSize}) {
+  static double getResponsiveFontSize(
+    BuildContext context, {
+    required double fontSize,
+  }) {
     double scaleFactor = getScaleFactor(context);
     double responsiveFontSize = fontSize * scaleFactor;
-    double minFontSize = fontSize * 0.8; 
-    double maxFontSize = fontSize * 1.2; 
+    double minFontSize = fontSize * 0.8;
+    double maxFontSize = fontSize * 1.2;
     return responsiveFontSize.clamp(minFontSize, maxFontSize);
   }
 
