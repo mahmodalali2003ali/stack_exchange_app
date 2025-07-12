@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/constants/color_app.dart' show AppColors;
+import 'core/utils/app_style.dart';
 import 'features/questions/presentation/views/questions_page.dart';
 
 void main() {
@@ -14,8 +15,10 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Stack Overflow',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primaryColor),
-        useMaterial3: true,
+        appBarTheme: AppBarTheme(
+          backgroundColor: AppColors.primaryColor,
+          titleTextStyle: AppStyle.styleSemiBold20(context),
+        ),
       ),
       home: const QuestionsPage(),
     );
