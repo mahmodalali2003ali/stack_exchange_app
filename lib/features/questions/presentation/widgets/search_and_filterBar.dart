@@ -12,7 +12,7 @@ class SearchAndFilterBar extends StatelessWidget {
     super.key,
     required this.controller,
     required this.selectedFilter,
-    required this.onFilterChanged,
+    required this.onFilterChanged, required void Function() onSearchTap,
   });
 
   @override

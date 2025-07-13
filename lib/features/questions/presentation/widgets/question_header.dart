@@ -42,7 +42,7 @@ class QuestionHeader extends StatelessWidget {
         const SizedBox(height: 12),
         Text(question.title, style: AppStyle.styleSemiBold16(context)),
         const SizedBox(height: 12),
-        Row(
+        Wrap(
           spacing: 8,
           children:
               question.tags

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/utils/app_style.dart';
 
 class EmptyStateWidget extends StatelessWidget {
-  const EmptyStateWidget({super.key});
+  const EmptyStateWidget({super.key, required Future<void> Function() onRetry});
 
   @override
   Widget build(BuildContext context) {
