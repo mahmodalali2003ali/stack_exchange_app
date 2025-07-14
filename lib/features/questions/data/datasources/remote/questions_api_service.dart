@@ -13,7 +13,7 @@ class QuestionsApiService {
       ApiConstants.questionsEndpoint,
       queryParameters: {
         'page': page,
-        'pagesize': 5,
+        'pagesize': 10,
         'order': 'desc',
         'sort': 'activity',
         'site': ApiConstants.site,

@@ -7,19 +7,24 @@ import '../views/question_details_page.dart';
 
 class QuestionCard extends StatelessWidget {
   final Question question;
-  const QuestionCard({super.key, required this.question});
+  final int index; // إضافة الرقم التسلسلي كمعامل
+
+  const QuestionCard({
+    super.key,
+    required this.question,
+    required this.index, // يجب تمرير الرقم التسلسلي عند استخدام البطاقة
+  });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap:
-          () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => QuestionDetailsPage(question: question),
-            ),
-          ),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => QuestionDetailsPage(question: question),
+        ),
+      ),
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.cardColor,
@@ -53,7 +58,21 @@ class QuestionCard extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.primaryColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            '${index + 1}',
+            style: AppStyle.styleRegular12(context)
+                .copyWith(color: AppColors.primaryColor, fontWeight: FontWeight.bold),
+          ),
+        ),
+        const SizedBox(width: 8),
         if (question.isAnswered)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -63,9 +82,8 @@ class QuestionCard extends StatelessWidget {
             ),
             child: Text(
               'تمت الإجابة',
-              style: AppStyle.styleRegular12(
-                context,
-              ).copyWith(color: AppColors.primaryColor),
+              style: AppStyle.styleRegular12(context)
+                  .copyWith(color: AppColors.primaryColor),
             ),
           ),
         const Spacer(),
@@ -91,22 +109,20 @@ class QuestionCard extends StatelessWidget {
     return Wrap(
       spacing: 8,
       runSpacing: 4,
-      children:
-          question.tags.map((tag) {
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                tag,
-                style: AppStyle.styleRegular12(
-                  context,
-                ).copyWith(color: AppColors.primaryColor),
-              ),
-            );
-          }).toList(),
+      children: question.tags.map((tag) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.primaryColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            tag,
+            style: AppStyle.styleRegular12(context)
+                .copyWith(color: AppColors.primaryColor),
+          ),
+        );
+      }).toList(),
     );
   }
 

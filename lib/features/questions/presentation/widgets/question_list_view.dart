@@ -58,8 +58,13 @@ class _QuestionListViewState extends State<QuestionListView> {
             itemCount: widget.questions.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
-              log('📱 QuestionListView: بناء السؤال رقم $index: ${widget.questions[index].title}');
-              return QuestionCard(question: widget.questions[index]);
+              log('📱 QuestionListView: بناء السؤال رقم ${index + 1} من ${widget.questions.length}: ${widget.questions[index].title}');
+             
+              final globalIndex = index;
+              return QuestionCard(
+                question: widget.questions[index],
+                index: globalIndex, 
+              );
             },
           ),
         ),

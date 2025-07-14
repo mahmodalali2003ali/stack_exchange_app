@@ -4,15 +4,15 @@ import '../../../../../core/error/failures.dart';
 import '../../../../../core/utils/network_checker.dart';
 import '../../domain/entities/question.dart';
 import '../../domain/repositories/question_repository.dart';
-import '../datasources/local/questions_local_db.dart';
+import '../datasources/local/local_storage.dart';
 import '../datasources/remote/questions_api_service.dart';
 import '../models/question_model.dart';
 
 class QuestionRepositoryImpl implements QuestionRepository {
   final QuestionsApiService apiService;
-  final QuestionsLocalDb localDb;
+  final LocalStorage localStorage;
 
-  QuestionRepositoryImpl(this.apiService, this.localDb);
+  QuestionRepositoryImpl(this.apiService, this.localStorage);
 
   @override
   Future<Either<Failure, List<Question>>> getQuestions({
@@ -21,7 +21,7 @@ class QuestionRepositoryImpl implements QuestionRepository {
   }) async {
     try {
       if (fromLocal) {
-        final localQuestions = await localDb.getAllQuestions();
+        final localQuestions = await localStorage.getAllQuestions();
         log('📋 QuestionRepositoryImpl: جلب ${localQuestions.length} سؤال من التخزين المحلي');
         if (localQuestions.isNotEmpty) {
           return Right(localQuestions);
@@ -32,7 +32,7 @@ class QuestionRepositoryImpl implements QuestionRepository {
       log('📋 QuestionRepositoryImpl: حالة الاتصال: $hasConnection');
 
       if (!hasConnection) {
-        final localQuestions = await localDb.getAllQuestions();
+        final localQuestions = await localStorage.getAllQuestions();
         log('📋 QuestionRepositoryImpl: جلب ${localQuestions.length} سؤال من التخزين المحلي (بدون اتصال)');
         if (localQuestions.isNotEmpty) {
           return Right(localQuestions);
@@ -47,9 +47,9 @@ class QuestionRepositoryImpl implements QuestionRepository {
       log('📋 QuestionRepositoryImpl: تم جلب ${remote.length} سؤال من الـ API');
 
       try {
-        await localDb.clearQuestions();
+        await localStorage.clearQuestions();
         for (var question in remote) {
-          await localDb.insertQuestion(question);
+          await localStorage.insertQuestion(question);
         }
         log('📋 QuestionRepositoryImpl: تم تخزين ${remote.length} سؤال في التخزين المحلي');
       } catch (e) {
@@ -61,7 +61,7 @@ class QuestionRepositoryImpl implements QuestionRepository {
       log('📋 QuestionRepositoryImpl: خطأ: $e');
       if (!fromLocal) {
         try {
-          final localQuestions = await localDb.getAllQuestions();
+          final localQuestions = await localStorage.getAllQuestions();
           log('📋 QuestionRepositoryImpl: جلب ${localQuestions.length} سؤال من التخزين المحلي بعد الخطأ');
           if (localQuestions.isNotEmpty) {
             return Right(localQuestions);
@@ -94,10 +94,10 @@ class QuestionRepositoryImpl implements QuestionRepository {
   @override
   Future<void> cacheQuestions(List<Question> questions) async {
     try {
-      await localDb.clearQuestions();
+      await localStorage.clearQuestions();
       for (var question in questions) {
         if (question is QuestionModel) {
-          await localDb.insertQuestion(question);
+          await localStorage.insertQuestion(question);
         }
       }
       log('📋 QuestionRepositoryImpl: تم تخزين ${questions.length} سؤال في التخزين المحلي');
@@ -109,7 +109,7 @@ class QuestionRepositoryImpl implements QuestionRepository {
   @override
   Future<void> clearLocalData() async {
     try {
-      await localDb.clearQuestions();
+      await localStorage.clearQuestions();
       log('📋 QuestionRepositoryImpl: تم مسح البيانات المحلية');
     } catch (e) {
       log('📋 QuestionRepositoryImpl: فشل في مسح البيانات المحلية: $e');
@@ -119,7 +119,7 @@ class QuestionRepositoryImpl implements QuestionRepository {
   @override
   Future<int> getLocalDataCount() async {
     try {
-      return await localDb.getQuestionCount();
+      return await localStorage.getQuestionCount();
     } catch (e) {
       log('📋 QuestionRepositoryImpl: خطأ في جلب عدد الأسئلة المحلية: $e');
       return 0;
@@ -129,7 +129,7 @@ class QuestionRepositoryImpl implements QuestionRepository {
   @override
   Future<Either<Failure, List<Question>>> searchQuestions(String query) async {
     try {
-      final localQuestions = await localDb.getAllQuestions();
+      final localQuestions = await localStorage.getAllQuestions();
       final localResults = localQuestions.where((q) {
         return q.title.toLowerCase().contains(query.toLowerCase()) ||
             q.tags.any((tag) => tag.toLowerCase().contains(query.toLowerCase())) ||
@@ -144,7 +144,7 @@ class QuestionRepositoryImpl implements QuestionRepository {
       final remoteResults = await apiService.searchQuestions(query);
       try {
         for (var question in remoteResults) {
-          await localDb.insertQuestion(question);
+          await localStorage.insertQuestion(question);
         }
         log('📋 QuestionRepositoryImpl: تم تخزين ${remoteResults.length} نتيجة بحث في التخزين المحلي');
       } catch (e) {

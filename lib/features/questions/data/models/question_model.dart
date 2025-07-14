@@ -20,30 +20,35 @@ class QuestionModel extends Question {
     print('📋 QuestionModel: بدء تحويل JSON إلى QuestionModel');
     print('📋 QuestionModel: البيانات المستلمة: $json');
 
+    // استخراج القيم مع التعامل مع الحالات المختلفة
     final id = json['question_id'] ?? json['id'] ?? 0;
     final title = json['title'] ?? 'بدون عنوان';
     final body = json['body'] ?? '';
     final score = json['score'] ?? 0;
-    final ownerName =
-        json['owner']?['display_name'] ?? json['owner_name'] ?? 'غير معروف';
-    final ownerProfileImage =
-        json['owner']?['profile_image'] ?? json['owner_profile_image'] ?? '';
+    final owner = json['owner'] as Map<String, dynamic>? ?? {};
+    final ownerName = owner['display_name'] ?? json['owner_name'] ?? 'غير معروف';
+    final ownerProfileImage = owner['profile_image'] ?? json['owner_profile_image'] ?? '';
     final link = json['link'] ?? '';
     final viewCount = json['view_count'] ?? json['viewCount'] ?? 0;
     final answerCount = json['answer_count'] ?? json['answerCount'] ?? 0;
-    final isAnswered = json['is_answered'] ?? json['isAnswered'] ?? false;
 
-    final creationDate =
-        json['creation_date'] != null
-            ? DateTime.fromMillisecondsSinceEpoch(json['creation_date'] * 1000)
-            : DateTime.tryParse(json['creationDate'] ?? '') ?? DateTime.now();
+    // التعامل مع is_answered كـ int وتحويله إلى bool
+    final isAnsweredRaw = json['is_answered'] ?? json['isAnswered'];
+    final isAnswered = isAnsweredRaw != null
+        ? (isAnsweredRaw is int ? isAnsweredRaw != 0 : isAnsweredRaw as bool)
+        : false;
 
-    final tags =
-        (json['tags'] != null && json['tags'] is List)
-            ? (json['tags'] as List).map((e) => e.toString()).toList()
-            : (json['tags'] is String
-                ? (json['tags'] as String).split(',')
-                : []);
+    final creationDateRaw = json['creation_date'] ?? json['creationDate'];
+    final creationDate = creationDateRaw != null
+        ? (creationDateRaw is int
+            ? DateTime.fromMillisecondsSinceEpoch(creationDateRaw * 1000)
+            : DateTime.tryParse(creationDateRaw.toString()) ?? DateTime.now())
+        : DateTime.now();
+
+    final tagsRaw = json['tags'];
+    final tags = (tagsRaw != null && tagsRaw is List)
+        ? (tagsRaw as List).map((e) => e.toString()).toList()
+        : (tagsRaw is String ? tagsRaw.split(',') : []);
 
     print('📋 QuestionModel: تم استخراج البيانات - ID: $id, Title: $title');
 
@@ -71,7 +76,7 @@ class QuestionModel extends Question {
       'score': score,
       'viewCount': viewCount,
       'answerCount': answerCount,
-      'isAnswered': isAnswered ? 1 : 0,
+      'isAnswered': isAnswered ? 1 : 0, 
       'creationDate': creationDate.toIso8601String(),
       'owner_name': ownerName,
       'owner_profile_image': ownerProfileImage,
