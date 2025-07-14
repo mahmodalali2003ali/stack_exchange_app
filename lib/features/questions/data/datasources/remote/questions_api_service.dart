@@ -1,16 +1,14 @@
 import 'dart:developer';
-
 import '../../../../../core/constants/api_constants.dart';
 import '../../../../../core/services/dio_client.dart';
-import '../../../domain/entities/question.dart';
 import '../../models/question_model.dart';
 
 class QuestionsApiService {
   final DioClient dioClient;
+
   QuestionsApiService(this.dioClient);
 
   Future<List<QuestionModel>> fetchQuestions(int page) async {
-    print('📡 QuestionsApiService: جلب الأسئلة من الصفحة $page');
     final response = await dioClient.get(
       ApiConstants.questionsEndpoint,
       queryParameters: {
@@ -21,26 +19,16 @@ class QuestionsApiService {
         'site': ApiConstants.site,
       },
     );
-    print('📡 QuestionsApiService: تم استلام الرد من API');
-    log('📦 Response: ${response.data}');
-
+    log('📋 QuestionsApiService: استجابة الـ API: ${response.data}');
     final items = response.data['items'] as List;
-    print('📡 QuestionsApiService: عدد العناصر المستلمة: ${items.length}');
-
-    final questions =
-        items.map((e) {
-          try {
-            final question = QuestionModel.fromJson(e);
-            print('📡 QuestionsApiService: تم تحويل السؤال: ${question.title}');
-            return question;
-          } catch (error) {
-            print('📡 QuestionsApiService: خطأ في تحويل السؤال: $error');
-            print('📡 QuestionsApiService: البيانات: $e');
-            rethrow;
-          }
-        }).toList();
-
-    print('📡 QuestionsApiService: تم تحويل ${questions.length} سؤال بنجاح');
+    final questions = items.map((e) {
+      try {
+        return QuestionModel.fromJson(e);
+      } catch (error) {
+        log('📋 QuestionsApiService: خطأ في تحليل السؤال: $error');
+        rethrow;
+      }
+    }).toList();
     return questions;
   }
 
@@ -49,7 +37,6 @@ class QuestionsApiService {
       '/questions/$questionId',
       queryParameters: {'site': 'stackoverflow', 'filter': 'withbody'},
     );
-
     final item = (response.data['items'] as List).first;
     return QuestionModel.fromJson(item);
   }
@@ -64,7 +51,21 @@ class QuestionsApiService {
         'filter': 'withbody',
       },
     );
+    return (response.data['items'] as List)
+        .map((e) => e['body'] as String)
+        .toList();
+  }
 
+  Future<List<String>> fetchComments(int questionId) async {
+    final response = await dioClient.get(
+      '/questions/$questionId/comments',
+      queryParameters: {
+        'site': 'stackoverflow',
+        'order': 'desc',
+        'sort': 'creation',
+        'filter': 'withbody',
+      },
+    );
     return (response.data['items'] as List)
         .map((e) => e['body'] as String)
         .toList();
@@ -80,7 +81,6 @@ class QuestionsApiService {
         'sort': 'relevance',
       },
     );
-
     return (response.data['items'] as List)
         .map((e) => QuestionModel.fromJson(e))
         .toList();

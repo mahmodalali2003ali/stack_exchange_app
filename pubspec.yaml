@@ -31,7 +31,6 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_bloc: 
-  flutter_localization: 
   get_it: 
   go_router: 
   url_launcher: 
@@ -49,6 +48,9 @@ dependencies:
   dartz: ^0.10.1
   connectivity_plus: ^6.1.4
   sqflite_common_ffi: ^2.3.6
+  flutter_localizations:
+    sdk: flutter
+  hive_flutter: ^1.1.0
 
 dev_dependencies:
   flutter_test:

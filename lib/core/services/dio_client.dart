@@ -1,34 +1,22 @@
-import 'dart:developer';
-
 import 'package:dio/dio.dart';
 
-import '../constants/api_constants.dart';
-import '../error/failures.dart';
-
 class DioClient {
-  final Dio dio;
+  final Dio _dio;
 
   DioClient()
-    : dio = Dio(
-        BaseOptions(
-          baseUrl: ApiConstants.baseUrl,
-          connectTimeout: Duration(seconds: 10),
-          receiveTimeout: Duration(seconds: 10),
-        ),
-      );
+      : _dio = Dio(
+          BaseOptions(
+            baseUrl: 'https://api.stackexchange.com/2.3',
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 10),
+          ),
+        );
 
-  Future<Response> get(
-    String url, {
-    Map<String, dynamic>? queryParameters,
-  }) async {
+  Future<Response> get(String path, {Map<String, dynamic>? queryParameters}) async {
     try {
-      final response = await dio.get(url, queryParameters: queryParameters);
-      log(response.toString());
-      return response;
-    } on DioException catch (e) {
-      throw ServerFailuer.fromDioError(e);
+      return await _dio.get(path, queryParameters: queryParameters);
     } catch (e) {
-      throw ServerFailuer('Unexpected Error: $e');
+      throw Exception('Failed to perform GET request: $e');
     }
   }
 }

@@ -1,7 +1,6 @@
-// question_cubit.dart
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-
+import 'dart:developer';
 import '../../../domain/entities/question.dart';
 import '../../../domain/usecases/get_questions_usecase.dart';
 
@@ -9,119 +8,122 @@ part 'question_state.dart';
 
 class QuestionCubit extends Cubit<QuestionState> {
   final GetQuestionsUseCase useCase;
-
   final List<Question> _allQuestions = [];
   List<Question> _filteredQuestions = [];
   int _currentPage = 1;
-  bool _isFetching = false;
   bool _hasMore = true;
-  bool isLastFetchFromLocal = false;
-
   String _currentSearchQuery = '';
+  bool isLastFetchFromLocal = false;
 
   QuestionCubit(this.useCase) : super(QuestionInitial());
 
-  Future<void> fetchQuestions({
-    bool isRefresh = false,
-    bool fromLocal = false,
-    
-  }) async {
-    if (_isFetching || (!_hasMore && !isRefresh)) return;
-
-    _isFetching = true;
-
+  Future<void> fetchQuestions({bool isRefresh = false, bool fromLocal = false}) async {
+    if (!_hasMore && !isRefresh) return;
     if (isRefresh) {
-      emit(QuestionLoading());
       _currentPage = 1;
-      _hasMore = true;
       _allQuestions.clear();
       _filteredQuestions.clear();
-      _currentSearchQuery = '';
-    } else {
-      emit(QuestionLoadingMore(
-        _currentSearchQuery.isEmpty ? _allQuestions : _filteredQuestions,
-      ));
+      _hasMore = true;
     }
 
-    final result = await useCase(fromLocal: fromLocal, page: _currentPage);
+    emit(QuestionLoading());
+    final result = await useCase.call(
+      page: _currentPage,
+      fromLocal: fromLocal,
+    );
 
-    result.fold((failure) => emit(QuestionError(failure.message)), (questions) {
-      if (questions.length < 10) _hasMore = false;
-      _allQuestions.addAll(questions);
-
-      if (_currentSearchQuery.isNotEmpty) {
-        _performSearch(_currentSearchQuery);
-      } else {
-        _filteredQuestions = List.from(_allQuestions);
-        isLastFetchFromLocal = fromLocal;
-
-        emit(QuestionLoaded(_filteredQuestions));
-      }
-      _currentPage++;
-    });
-    _isFetching = false;
+    result.fold(
+      (failure) {
+        log('📋 QuestionCubit: خطأ: ${failure.message}');
+        emit(QuestionError(failure.message));
+      },
+      (questions) {
+        log('📋 QuestionCubit: تم جلب ${questions.length} سؤال');
+        if (questions.isEmpty && _allQuestions.isEmpty) {
+          emit(QuestionEmpty());
+        } else {
+          if (questions.isEmpty) _hasMore = false;
+          _allQuestions.addAll(questions);
+          isLastFetchFromLocal = fromLocal;
+          log('📋 QuestionCubit: إجمالي الأسئلة في _allQuestions: ${_allQuestions.length}');
+          if (_currentSearchQuery.isNotEmpty) {
+            _performSearch(_currentSearchQuery);
+          } else {
+            _filteredQuestions = List.from(_allQuestions);
+            log('📋 QuestionCubit: إجمالي الأسئلة في _filteredQuestions: ${_filteredQuestions.length}');
+            emit(QuestionLoaded(_filteredQuestions));
+          }
+          _currentPage++;
+        }
+      },
+    );
   }
 
-  void search(String query) {
-    final trimmedQuery = query.trim();
-    if (trimmedQuery.isEmpty) {
-      resetSearch();
+  Future<void> search(String query) async {
+    _currentSearchQuery = query;
+    if (query.isEmpty) {
+      _filteredQuestions = List.from(_allQuestions);
+      emit(QuestionLoaded(_filteredQuestions));
       return;
     }
-    if (trimmedQuery == _currentSearchQuery) return;
 
-    _currentSearchQuery = trimmedQuery;
-    _performSearch(trimmedQuery);
-  }
-
-  void _performSearch(String query) async {
-    try {
-      final localResults = _allQuestions.where((q) {
-        return q.title.toLowerCase().contains(query.toLowerCase()) ||
-            q.tags.any((tag) => tag.toLowerCase().contains(query.toLowerCase())) ||
-            q.ownerName.toLowerCase().contains(query.toLowerCase());
-      }).toList();
-
-      if (localResults.isNotEmpty) {
-        _filteredQuestions = localResults;
-        emit(QuestionLoaded(_filteredQuestions));
-      } else {
-        emit(QuestionSearching());
-        final result = await useCase.searchQuestions(query);
-        result.fold((failure) => emit(QuestionError(failure.message)), (questions) {
-          _filteredQuestions = questions;
-          emit(questions.isEmpty ? QuestionEmpty() : QuestionLoaded(questions));
-        });
-      }
-    } catch (e) {
-      emit(QuestionError('Search error: ${e.toString()}'));
-    }
+    emit(QuestionSearching());
+    final result = await useCase.search(query: query);
+    result.fold(
+      (failure) => emit(QuestionError(failure.message)),
+      (questions) {
+        _filteredQuestions = questions;
+        if (_filteredQuestions.isEmpty) {
+          emit(QuestionEmpty());
+        } else {
+          emit(QuestionLoaded(_filteredQuestions));
+        }
+      },
+    );
   }
 
   void resetSearch() {
     _currentSearchQuery = '';
     _filteredQuestions = List.from(_allQuestions);
-    emit(QuestionLoaded(_filteredQuestions));
+    if (_filteredQuestions.isEmpty) {
+      emit(QuestionEmpty());
+    } else {
+      emit(QuestionLoaded(_filteredQuestions));
+    }
   }
 
   Future<void> clearLocalData() async {
     try {
-      await useCase.clearLocalData();
+      await useCase.repository.clearLocalData();
       _allQuestions.clear();
       _filteredQuestions.clear();
       _currentPage = 1;
       _hasMore = true;
       emit(QuestionEmpty());
     } catch (e) {
-      emit(QuestionError('فشل في مسح البيانات المحلية: ${e.toString()}'));
+      emit(QuestionError('فشل في مسح البيانات المحلية: $e'));
     }
   }
 
   Future<int> getLocalDataCount() async {
     try {
-      return await useCase.getLocalDataCount();
-    } catch (_) {
+      return await useCase.repository.getLocalDataCount();
+    } catch (e) {
+      log('📋 QuestionCubit: خطأ في جلب عدد الأسئلة المحلية: $e');
       return 0;
+    }
+  }
+
+  void _performSearch(String query) {
+    _filteredQuestions = _allQuestions.where((q) {
+      return q.title.toLowerCase().contains(query.toLowerCase()) ||
+          q.tags.any((tag) => tag.toLowerCase().contains(query.toLowerCase())) ||
+          q.ownerName.toLowerCase().contains(query.toLowerCase());
+    }).toList();
+    if (_filteredQuestions.isEmpty) {
+      emit(QuestionEmpty());
+    } else {
+      emit(QuestionLoaded(_filteredQuestions));
     }
   }
 }

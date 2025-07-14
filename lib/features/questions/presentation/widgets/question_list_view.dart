@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
+import 'dart:developer';
 import '../../domain/entities/question.dart';
-import 'question_card.dart';
+import '../widgets/question_card.dart';
 
 class QuestionListView extends StatefulWidget {
   final List<Question> questions;
-  final VoidCallback? onLoadMore;
+  final VoidCallback onLoadMore;
 
-  const QuestionListView({super.key, required this.questions, this.onLoadMore});
+  const QuestionListView({
+    super.key,
+    required this.questions,
+    required this.onLoadMore,
+  });
 
   @override
   State<QuestionListView> createState() => _QuestionListViewState();
@@ -19,28 +24,31 @@ class _QuestionListViewState extends State<QuestionListView> {
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_handleScroll);
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >=
+              _scrollController.position.maxScrollExtent - 200 &&
+          !_isLoadingMore) {
+        setState(() => _isLoadingMore = true);
+        widget.onLoadMore();
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) setState(() => _isLoadingMore = false);
+        });
+      }
+    });
   }
 
-  void _handleScroll() {
-    if (_scrollController.position.pixels >=
-            _scrollController.position.maxScrollExtent - 200 &&
-        !_isLoadingMore) {
-      _loadMore();
-    }
-  }
-
-  Future<void> _loadMore() async {
-    if (widget.onLoadMore == null) return;
-
-    setState(() => _isLoadingMore = true);
-    widget.onLoadMore!();
-    setState(() => _isLoadingMore = false);
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    print('📱 QuestionListView: بناء قائمة بـ ${widget.questions.length} سؤال');
+    log('📱 QuestionListView: بناء قائمة بـ ${widget.questions.length} سؤال');
+    if (widget.questions.isEmpty) {
+      return const Center(child: Text('لا توجد أسئلة لعرضها'));
+    }
     return Column(
       children: [
         Expanded(
@@ -50,9 +58,7 @@ class _QuestionListViewState extends State<QuestionListView> {
             itemCount: widget.questions.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
-              print(
-                '📱 QuestionListView: بناء السؤال رقم $index: ${widget.questions[index].title}',
-              );
+              log('📱 QuestionListView: بناء السؤال رقم $index: ${widget.questions[index].title}');
               return QuestionCard(question: widget.questions[index]);
             },
           ),

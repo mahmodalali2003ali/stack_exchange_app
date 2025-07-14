@@ -7,24 +7,37 @@ sealed class QuestionState extends Equatable {
   List<Object> get props => [];
 }
 
-final class QuestionInitial extends QuestionState {}
+class QuestionInitial extends QuestionState {}
 
 class QuestionLoading extends QuestionState {}
-class QuestionEmpty extends QuestionState {}
+
+class QuestionSearching extends QuestionState {}
 
 class QuestionLoaded extends QuestionState {
   final List<Question> questions;
+
   const QuestionLoaded(this.questions);
+
+  @override
+  List<Object> get props => [questions];
 }
+
 class QuestionLoadingMore extends QuestionState {
   final List<Question> questions;
+
   const QuestionLoadingMore(this.questions);
+
+  @override
+  List<Object> get props => [questions];
 }
-class QuestionSearching extends QuestionState {
-  
-}
+
+class QuestionEmpty extends QuestionState {}
 
 class QuestionError extends QuestionState {
   final String message;
+
   const QuestionError(this.message);
+
+  @override
+  List<Object> get props => [message];
 }

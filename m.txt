@@ -1,0 +1,1387 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+import 'core/constants/color_app.dart' show AppColors;
+import 'core/utils/app_style.dart';
+import 'core/utils/service_locator.dart';
+import 'features/questions/presentation/manager/question/question_cubit.dart';
+import 'features/questions/presentation/views/questions_page.dart';
+import 'my_observer.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await dotenv.load();
+  await init();
+  runApp(MyApp());
+  Bloc.observer = MyObserver();
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiBlocProvider(
+      providers: [BlocProvider(create: (context) => getIt<QuestionCubit>())],
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Stack Overflow',
+
+        locale: const Locale('ar'),
+        supportedLocales: const [Locale('ar')],
+
+
+        builder: (context, child) {
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: child!,
+          );
+        },
+
+        theme: ThemeData(
+          fontFamily: 'Tajawal',
+          primaryColor: AppColors.primaryColor,
+          appBarTheme: AppBarTheme(
+            backgroundColor: AppColors.primaryColor,
+            titleTextStyle: AppStyle.styleSemiBold20(context),
+            centerTitle: true,
+            elevation: 1,
+          ),
+          scaffoldBackgroundColor: Colors.white,
+        ),
+
+        home: const QuestionsPage(),
+      ),
+    );
+  }
+}
+import 'package:stack_exchange_app/keys/keys_api.dart';
+
+class ApiConstants {
+  static String baseUrl = 'https://api.stackexchange.com/2.3';
+  static const String questionsEndpoint = '/questions';
+  static const String site = 'stackoverflow';
+  static const String search = '/search';
+}
+import 'dart:developer';
+
+import 'package:dio/dio.dart';
+
+import '../constants/api_constants.dart';
+import '../error/failures.dart';
+
+class DioClient {
+  final Dio dio;
+
+  DioClient()
+      : dio = Dio(
+          BaseOptions(
+            baseUrl: ApiConstants.baseUrl,
+            connectTimeout: Duration(seconds: 10),
+            receiveTimeout: Duration(seconds: 10),
+          ),
+        );
+
+  Future<Response> get(
+    String url, {
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    try {
+      final response = await dio.get(url, queryParameters: queryParameters);
+      log(response.toString());
+      return response;
+    } on DioException catch (e) {
+      throw ServerFailuer.fromDioError(e);
+    } catch (e) {
+      throw ServerFailuer('Unexpected Error: $e');
+    }
+  }
+}
+// core/utils/network_checker.dart
+import 'package:connectivity_plus/connectivity_plus.dart';
+
+class NetworkChecker {
+  static Future<bool> hasConnection() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    return connectivityResult != ConnectivityResult.none;
+  }
+}
+import 'package:get_it/get_it.dart';
+
+import '../../features/questions/data/datasources/local/questions_local_db.dart';
+import '../../features/questions/data/datasources/remote/questions_api_service.dart';
+import '../../features/questions/data/repos/question_repository_impl.dart';
+import '../../features/questions/domain/repositories/question_repository.dart';
+import '../../features/questions/domain/usecases/get_questions_usecase.dart';
+import '../../features/questions/presentation/manager/question/question_cubit.dart';
+import '../../features/questions/presentation/manager/questionDetails/question_details_cubit.dart';
+import '../services/dio_client.dart';
+
+final getIt = GetIt.instance;
+
+Future<void> init() async {
+  if (!getIt.isRegistered<DioClient>()) {
+    getIt.registerLazySingleton(() => DioClient());
+  }
+
+  // Local DB
+  if (!getIt.isRegistered<QuestionsLocalDb>()) {
+    getIt.registerLazySingleton(() => QuestionsLocalDb());
+  }
+
+  // Remote API
+  if (!getIt.isRegistered<QuestionsApiService>()) {
+    getIt.registerLazySingleton(() => QuestionsApiService(getIt()));
+  }
+
+  // Repository
+  if (!getIt.isRegistered<QuestionRepository>()) {
+    getIt.registerLazySingleton<QuestionRepository>(
+      () => QuestionRepositoryImpl(getIt(), getIt()),
+    );
+  }
+
+  if (!getIt.isRegistered<GetQuestionsUseCase>()) {
+    getIt.registerLazySingleton(() => GetQuestionsUseCase(getIt()));
+  }
+
+  getIt.registerFactory(() => QuestionCubit(getIt()));
+  getIt.registerFactory(() => QuestionDetailsCubit(getIt()));
+
+}
+import '../../models/question_model.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+class QuestionsLocalDb {
+  static Database? _db;
+
+  Future<Database> get database async {
+    if (_db != null) return _db!;
+    _db = await _initDb();
+    return _db!;
+  }
+
+  Future<Database> _initDb() async {
+    final path = join(await getDatabasesPath(), 'questions.db');
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE questions(
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            body TEXT,
+            score INTEGER,
+            viewCount INTEGER,
+            answerCount INTEGER,
+            isAnswered INTEGER,
+            creationDate TEXT,
+            owner_name TEXT,
+            owner_profile_image TEXT,
+            tags TEXT,
+            link TEXT
+          )
+        ''');
+      },
+    );
+  }
+
+  Future<void> insertQuestion(QuestionModel question) async {
+    final db = await database;
+    await db.insert(
+      'questions',
+      question.toJson(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<QuestionModel>> getAllQuestions() async {
+    final db = await database;
+    final maps = await db.query('questions');
+    return maps.map((map) => QuestionModel.fromJson(map)).toList();
+  }
+
+  Future<void> clearQuestions() async {
+    final db = await database;
+    await db.delete('questions');
+  }
+}
+import 'dart:developer';
+
+import '../../../../../core/constants/api_constants.dart';
+import '../../../../../core/services/dio_client.dart';
+import '../../models/question_model.dart';
+
+class QuestionsApiService {
+  final DioClient dioClient;
+  QuestionsApiService(this.dioClient);
+
+  Future<List<QuestionModel>> fetchQuestions(int page) async {
+    final response = await dioClient.get(
+      ApiConstants.questionsEndpoint,
+      queryParameters: {
+        'page': page,
+        'pagesize': 5,
+        'order': 'desc',
+        'sort': 'activity',
+        'site': ApiConstants.site,
+      },
+    );
+    log(response.toString());
+
+    final items = response.data['items'] as List;
+
+    final questions =
+        items.map((e) {
+          try {
+            final question = QuestionModel.fromJson(e);
+            return question;
+          } catch (error) {
+            rethrow;
+          }
+        }).toList();
+
+    return questions;
+  }
+
+  Future<QuestionModel> fetchQuestionBody(int questionId) async {
+    final response = await dioClient.get(
+      '/questions/$questionId',
+      queryParameters: {'site': 'stackoverflow', 'filter': 'withbody'},
+    );
+
+    final item = (response.data['items'] as List).first;
+    return QuestionModel.fromJson(item);
+  }
+
+  Future<List<String>> fetchAnswers(int questionId) async {
+    final response = await dioClient.get(
+      '/questions/$questionId/answers',
+      queryParameters: {
+        'site': 'stackoverflow',
+        'order': 'desc',
+        'sort': 'votes',
+        'filter': 'withbody',
+      },
+    );
+
+    return (response.data['items'] as List)
+        .map((e) => e['body'] as String)
+        .toList();
+  }
+
+  Future<List<QuestionModel>> searchQuestions(String query) async {
+    final response = await dioClient.get(
+      ApiConstants.search,
+      queryParameters: {
+        'intitle': query,
+        'site': ApiConstants.site,
+        'order': 'desc',
+        'sort': 'relevance',
+      },
+    );
+
+    return (response.data['items'] as List)
+        .map((e) => QuestionModel.fromJson(e))
+        .toList();
+  }
+}
+import '../../domain/entities/question.dart';
+
+class QuestionModel extends Question {
+  const QuestionModel({
+    required super.id,
+    required super.title,
+    required super.body,
+    required super.score,
+    required super.ownerName,
+    required super.ownerProfileImage,
+    required super.link,
+    required super.viewCount,
+    required super.answerCount,
+    required super.isAnswered,
+    required super.creationDate,
+    required super.tags,
+  });
+
+  factory QuestionModel.fromJson(Map<String, dynamic> json) {
+    print('📋 QuestionModel: بدء تحويل JSON إلى QuestionModel');
+    print('📋 QuestionModel: البيانات المستلمة: $json');
+
+    final id = json['question_id'] ?? json['id'] ?? 0;
+    final title = json['title'] ?? 'بدون عنوان';
+    final body = json['body'] ?? '';
+    final score = json['score'] ?? 0;
+    final ownerName =
+        json['owner']?['display_name'] ?? json['owner_name'] ?? 'غير معروف';
+    final ownerProfileImage =
+        json['owner']?['profile_image'] ?? json['owner_profile_image'] ?? '';
+    final link = json['link'] ?? '';
+    final viewCount = json['view_count'] ?? json['viewCount'] ?? 0;
+    final answerCount = json['answer_count'] ?? json['answerCount'] ?? 0;
+    final isAnswered = json['is_answered'] ?? json['isAnswered'] ?? false;
+
+    final creationDate =
+        json['creation_date'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(json['creation_date'] * 1000)
+            : DateTime.tryParse(json['creationDate'] ?? '') ?? DateTime.now();
+
+    final tags =
+        (json['tags'] != null && json['tags'] is List)
+            ? (json['tags'] as List).map((e) => e.toString()).toList()
+            : (json['tags'] is String
+                ? (json['tags'] as String).split(',')
+                : []);
+
+    print('📋 QuestionModel: تم استخراج البيانات - ID: $id, Title: $title');
+
+    return QuestionModel(
+      id: id,
+      title: title,
+      body: body,
+      score: score,
+      ownerName: ownerName,
+      ownerProfileImage: ownerProfileImage,
+      link: link,
+      viewCount: viewCount,
+      answerCount: answerCount,
+      isAnswered: isAnswered,
+      creationDate: creationDate,
+      tags: tags.map((e) => e.toString()).toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'body': body,
+      'score': score,
+      'viewCount': viewCount,
+      'answerCount': answerCount,
+      'isAnswered': isAnswered ? 1 : 0,
+      'creationDate': creationDate.toIso8601String(),
+      'owner_name': ownerName,
+      'owner_profile_image': ownerProfileImage,
+      'link': link,
+      'tags': tags.join(','),
+    };
+  }
+}
+import '../../../../core/error/failures.dart';
+import '../../../../core/utils/network_checker.dart';
+import '../../domain/repositories/question_repository.dart';
+import '../../domain/entities/question.dart';
+import '../datasources/local/questions_local_db.dart';
+import '../datasources/remote/questions_api_service.dart';
+import 'package:dartz/dartz.dart';
+
+import '../models/question_model.dart';
+
+class QuestionRepositoryImpl implements QuestionRepository {
+  final QuestionsApiService apiService;
+  final QuestionsLocalDb localDb;
+
+  QuestionRepositoryImpl(this.apiService, this.localDb);
+
+  @override
+  Future<Either<Failure, List<Question>>> getQuestions({
+    bool fromLocal = false,
+    int page = 1,
+  }) async {
+    try {
+      if (fromLocal) {
+        final localQuestions = await localDb.getAllQuestions();
+        if (localQuestions.isNotEmpty) {
+          return Right(localQuestions);
+        }
+      }
+
+      final hasConnection = await NetworkChecker.hasConnection();
+
+      if (!hasConnection) {
+        final localQuestions = await localDb.getAllQuestions();
+        if (localQuestions.isNotEmpty) {
+          return Right(localQuestions);
+        } else {
+          return Left(
+            ServerFailuer('لا يوجد اتصال بالإنترنت ولا توجد بيانات محلية'),
+          );
+        }
+      }
+
+      final remote = await apiService.fetchQuestions(page);
+
+      await localDb.clearQuestions();
+      for (var question in remote) {
+        await localDb.insertQuestion(question);
+      }
+
+      return Right(remote);
+    } catch (e) {
+      if (!fromLocal) {
+        try {
+          final localQuestions = await localDb.getAllQuestions();
+          if (localQuestions.isNotEmpty) {
+            return Right(localQuestions);
+          }
+        } catch (localError) {
+          return Left(
+            ServerFailuer(
+              'لا توجد بيانات محلية متاحة: ${localError.toString()}',
+            ),
+          );
+        }
+      }
+      return Left(ServerFailuer(e.toString()));
+    }
+  }
+
+  Future<List<Question>> getLocalQuestions() async {
+    return await localDb.getAllQuestions();
+  }
+
+  Future<QuestionModel> getRemoteQuestionBody({required int questionId}) async {
+    return await apiService.fetchQuestionBody(questionId);
+  }
+
+  @override
+  Future<void> cacheQuestions(List<Question> questions) async {
+    await localDb.clearQuestions();
+    for (var question in questions) {
+      if (question is QuestionModel) {
+        await localDb.insertQuestion(question);
+      }
+    }
+  }
+
+  @override
+  Future<void> clearLocalData() async {
+    await localDb.clearQuestions();
+  }
+
+  @override
+  Future<int> getLocalDataCount() async {
+    final questions = await localDb.getAllQuestions();
+    return questions.length;
+  }
+
+  @override
+  Future<Either<Failure, List<Question>>> searchQuestions(String query) async {
+    try {
+      final localQuestions = await localDb.getAllQuestions();
+      final localResults = localQuestions.where((q) {
+        return q.title.toLowerCase().contains(query.toLowerCase()) ||
+            q.tags.any(
+              (tag) => tag.toLowerCase().contains(query.toLowerCase()),
+            ) ||
+            (q.ownerName.toLowerCase().contains(query.toLowerCase()));
+      }).toList();
+
+      if (localResults.isNotEmpty) {
+        return Right(localResults);
+      }
+
+      final remoteResults = await apiService.searchQuestions(query);
+      for (var question in remoteResults) {
+        await localDb.insertQuestion(question);
+      }
+      return Right(remoteResults);
+    } catch (e) {
+      return Left(ServerFailuer(e.toString()));
+    }
+  }
+}
+import 'package:equatable/equatable.dart';
+
+class Question extends Equatable {
+  final int id;
+  final String title;
+  final String? body;
+  final int score;
+  final int viewCount;
+  final int answerCount;
+  final bool isAnswered;
+  final DateTime creationDate;
+  final String ownerName;
+  final String? ownerProfileImage;
+  final List<String> tags;
+  final String link;
+
+  const Question({
+    required this.id,
+    required this.title,
+    this.body,
+    required this.score,
+    required this.viewCount,
+    required this.answerCount,
+    required this.isAnswered,
+    required this.creationDate,
+    required this.ownerName,
+    this.ownerProfileImage,
+    required this.tags,
+    required this.link,
+  });
+
+  @override
+  List<Object?> get props => [
+        id,
+        title,
+        body,
+        score,
+        viewCount,
+        answerCount,
+        isAnswered,
+        creationDate,
+        ownerName,
+        ownerProfileImage,
+        tags,
+        link,
+      ];
+}
+import 'package:dartz/dartz.dart';
+
+import '../../../../core/error/failures.dart';
+import '../entities/question.dart';
+
+abstract class QuestionRepository {
+  Future<Either<Failure, List<Question>>> getQuestions({
+    bool fromLocal = false,
+    int page = 1,
+  });
+  Future<void> cacheQuestions(List<Question> questions);
+  Future<Either<Failure, List<Question>>> searchQuestions(String query);
+  Future<void> clearLocalData();
+  Future<int> getLocalDataCount();
+}
+import 'package:dartz/dartz.dart';
+import '../../../../core/error/failures.dart';
+import '../repositories/question_repository.dart';
+import '../entities/question.dart';
+
+class GetQuestionsUseCase {
+  final QuestionRepository repository;
+
+  GetQuestionsUseCase(this.repository);
+
+  Future<Either<Failure, List<Question>>> call({
+    bool fromLocal = false,
+    int page = 1,
+  }) {
+    return repository.getQuestions(fromLocal: fromLocal, page: page);
+  }
+
+  Future<void> cacheQuestions(List<Question> questions) {
+    return repository.cacheQuestions(questions);
+  }
+
+  Future<Either<Failure, List<Question>>> searchQuestions(String query) async {
+    return await repository.searchQuestions(query);
+  }
+
+  Future<void> clearLocalData() async {
+    return await repository.clearLocalData();
+  }
+
+  Future<int> getLocalDataCount() async {
+    return await repository.getLocalDataCount();
+  }
+}
+import 'package:bloc/bloc.dart';
+import 'package:equatable/equatable.dart';
+
+import '../../../domain/entities/question.dart';
+import '../../../domain/usecases/get_questions_usecase.dart';
+
+part 'question_state.dart';
+
+class QuestionCubit extends Cubit<QuestionState> {
+  final GetQuestionsUseCase useCase;
+
+  final List<Question> _allQuestions = [];
+  List<Question> _filteredQuestions = [];
+  int _currentPage = 1;
+  bool _isFetching = false;
+  bool _hasMore = true;
+  bool isLastFetchFromLocal = false;
+
+  String _currentSearchQuery = '';
+
+  QuestionCubit(this.useCase) : super(QuestionInitial());
+
+  Future<void> fetchQuestions({
+    bool isRefresh = false,
+    bool fromLocal = false,
+  }) async {
+    if (_isFetching || (!_hasMore && !isRefresh)) return;
+    _isFetching = true;
+
+    try {
+      if (isRefresh) {
+        emit(QuestionLoading());
+        _currentPage = 1;
+        _hasMore = true;
+        _allQuestions.clear();
+        _filteredQuestions.clear();
+        _currentSearchQuery = '';
+      } else {
+        emit(QuestionLoadingMore(
+          _currentSearchQuery.isEmpty ? _allQuestions : _filteredQuestions,
+        ));
+      }
+
+      final result = await useCase(fromLocal: fromLocal, page: _currentPage);
+
+      result.fold(
+        (failure) {
+          emit(QuestionError(failure.message));
+        },
+        (questions) {
+          if (questions.isEmpty && _allQuestions.isEmpty) {
+            emit(QuestionEmpty());
+          } else {
+            if (questions.length < 10) _hasMore = false;
+            _allQuestions.addAll(questions);
+            isLastFetchFromLocal = fromLocal;
+
+            if (_currentSearchQuery.isNotEmpty) {
+              _performSearch(_currentSearchQuery);
+            } else {
+              _filteredQuestions = List.from(_allQuestions);
+              emit(QuestionLoaded(_filteredQuestions));
+            }
+
+            _currentPage++;
+          }
+        },
+      );
+    } catch (e) {
+      emit(QuestionError('فشل في تحميل البيانات: ${e.toString()}'));
+    } finally {
+      _isFetching = false;
+    }
+  }
+
+  void search(String query) {
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isEmpty) {
+      resetSearch();
+      return;
+    }
+
+    if (trimmedQuery == _currentSearchQuery) return;
+
+    _currentSearchQuery = trimmedQuery;
+    _performSearch(trimmedQuery);
+  }
+
+  void _performSearch(String query) async {
+    try {
+      final localResults = _allQuestions.where((q) {
+        return q.title.toLowerCase().contains(query.toLowerCase()) ||
+            q.tags.any((tag) => tag.toLowerCase().contains(query.toLowerCase())) ||
+            q.ownerName.toLowerCase().contains(query.toLowerCase());
+      }).toList();
+
+      if (localResults.isNotEmpty) {
+        _filteredQuestions = localResults;
+        emit(QuestionLoaded(_filteredQuestions));
+      } else {
+        emit(QuestionSearching());
+        final result = await useCase.searchQuestions(query);
+        result.fold(
+          (failure) => emit(QuestionError(failure.message)),
+          (questions) {
+            _filteredQuestions = questions;
+            emit(questions.isEmpty ? QuestionEmpty() : QuestionLoaded(questions));
+          },
+        );
+      }
+    } catch (e) {
+      emit(QuestionError('حدث خطأ أثناء البحث: ${e.toString()}'));
+    }
+  }
+
+  void resetSearch() {
+    _currentSearchQuery = '';
+    _filteredQuestions = List.from(_allQuestions);
+    emit(QuestionLoaded(_filteredQuestions));
+  }
+
+  Future<void> clearLocalData() async {
+    try {
+      await useCase.clearLocalData();
+      _allQuestions.clear();
+      _filteredQuestions.clear();
+      _currentPage = 1;
+      _hasMore = true;
+      emit(QuestionEmpty());
+    } catch (e) {
+      emit(QuestionError('فشل في مسح البيانات المحلية: ${e.toString()}'));
+    }
+  }
+
+  Future<int> getLocalDataCount() async {
+    try {
+      return await useCase.getLocalDataCount();
+    } catch (_) {
+      return 0;
+    }
+  }
+}
+part of 'question_cubit.dart';
+
+sealed class QuestionState extends Equatable {
+  const QuestionState();
+
+  @override
+  List<Object> get props => [];
+}
+
+final class QuestionInitial extends QuestionState {}
+
+class QuestionLoading extends QuestionState {}
+class QuestionEmpty extends QuestionState {}
+
+class QuestionLoaded extends QuestionState {
+  final List<Question> questions;
+  const QuestionLoaded(this.questions);
+  @override
+  List<Object> get props => [questions];
+}
+class QuestionLoadingMore extends QuestionState {
+  final List<Question> questions;
+  const QuestionLoadingMore(this.questions);
+}
+class QuestionSearching extends QuestionState {
+  
+}
+
+class QuestionError extends QuestionState {
+  final String message;
+  const QuestionError(this.message);
+}
+// questions_page.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../domain/entities/question.dart';
+import '../manager/question/question_cubit.dart';
+import '../widgets/empty_state_widget.dart';
+import '../widgets/question_list_view.dart';
+import '../widgets/search_and_filterBar.dart';
+import '../widgets/skeleton_question_card.dart';
+
+class QuestionsPage extends StatefulWidget {
+  const QuestionsPage({super.key});
+
+  @override
+  State<QuestionsPage> createState() => _QuestionsPageState();
+}
+
+class _QuestionsPageState extends State<QuestionsPage> {
+  final TextEditingController _searchController = TextEditingController();
+  late final QuestionCubit _questionCubit;
+  String _selectedFilter = 'الأحدث';
+  bool _isSearchActive = false;
+  int _localDataCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _questionCubit = context.read<QuestionCubit>();
+    _loadInitialData();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  Future<void> _loadInitialData() async {
+    print('📱 QuestionsPage: بدء تحميل البيانات من الإنترنت أولاً');
+    // محاولة جلب البيانات من الإنترنت أولًا
+    await _questionCubit.fetchQuestions(isRefresh: true);
+
+    // ثم تحديث عدد البيانات المحلية (إن وُجدت)
+    _updateLocalDataCount();
+  }
+
+  Future<void> _updateLocalDataCount() async {
+    final count = await _questionCubit.getLocalDataCount();
+    setState(() {
+      _localDataCount = count;
+    });
+  }
+
+  void _showLocalDataInfo() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('تم تحميل البيانات من التخزين المحلي'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Colors.blue,
+      ),
+    );
+  }
+
+  Future<void> _clearLocalData() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Text('تأكيد المسح'),
+            content: Text('هل تريد مسح جميع البيانات المحلية؟'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text('إلغاء'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text('مسح'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmed == true) {
+      await _questionCubit.clearLocalData();
+      _updateLocalDataCount();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تم مسح البيانات المحلية'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _onSearchChanged() {
+    final query = _searchController.text;
+    setState(() => _isSearchActive = query.isNotEmpty);
+    if (query.isEmpty) {
+      _questionCubit.resetSearch();
+    } else if (query.length > 2) {
+      _questionCubit.search(query);
+    }
+  }
+
+  void _applyFilter(String filter) {
+    if (_selectedFilter == filter) return;
+    setState(() => _selectedFilter = filter);
+  }
+
+  Future<void> _refreshData() async {
+    await _questionCubit.fetchQuestions(isRefresh: true);
+    if (_searchController.text.isNotEmpty) {
+      _questionCubit.search(_searchController.text);
+    }
+  }
+
+  List<Question> _applySort(List<Question> questions) {
+    final sorted = [...questions];
+    switch (_selectedFilter) {
+      case 'الأكثر تصويتاً':
+        sorted.sort((a, b) => b.score.compareTo(a.score));
+        break;
+      case 'الأكثر إجابة':
+        sorted.sort((a, b) => b.answerCount.compareTo(a.answerCount));
+        break;
+      case 'الأكثر مشاهدة':
+        sorted.sort((a, b) => b.viewCount.compareTo(a.viewCount));
+        break;
+      default:
+        sorted.sort((a, b) => b.creationDate.compareTo(a.creationDate));
+    }
+    return sorted;
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('أسئلة Stack Overflow'),
+            if (_localDataCount > 0)
+              Text(
+                'البيانات المحلية: $_localDataCount',
+                style: TextStyle(fontSize: 12, color: Colors.white70),
+              ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.storage),
+            onPressed: () async {
+              await _questionCubit.fetchQuestions(
+                fromLocal: true,
+                isRefresh: true,
+              );
+              _updateLocalDataCount();
+            },
+            tooltip: 'تحميل البيانات المحلية',
+          ),
+
+          IconButton(
+            icon: const Icon(Icons.delete_sweep),
+            onPressed: _clearLocalData,
+            tooltip: 'مسح البيانات المحلية',
+          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _refreshData),
+        ],
+      ),
+      body: Column(
+        children: [
+          SearchAndFilterBar(
+            controller: _searchController,
+            selectedFilter: _selectedFilter,
+            onFilterChanged: _applyFilter,
+            onSearchTap: () => setState(() => _isSearchActive = false),
+          ),
+          Expanded(
+            child: BlocConsumer<QuestionCubit, QuestionState>(
+              listener: (context, state) {
+                
+                if (state is QuestionError) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(state.message)));
+                } else if (state is QuestionLoaded) {
+                  if (_questionCubit.isLastFetchFromLocal) {
+                    _showLocalDataInfo();
+                  }
+                }
+              },
+              builder: (context, state) {
+                if (state is QuestionLoading) {
+                  return ListView.builder(
+                    itemCount: 5,
+                    itemBuilder:
+                        (_, index) => Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: const SkeletonQuestionCard(),
+                        ),
+                  );
+                } else if (state is QuestionSearching) {
+                  return Center(child: CircularProgressIndicator());
+                } else if (state is QuestionEmpty) {
+                  return EmptyStateWidget(
+                    onRetry:
+                        () => _questionCubit.fetchQuestions(isRefresh: true),
+                  );
+                } else if (state is QuestionLoaded) {
+                  final sorted = _applySort(state.questions);
+                 
+                  return RefreshIndicator(
+                    onRefresh: _refreshData,
+                    child: QuestionListView(
+                      questions: sorted,
+                      onLoadMore: () => _questionCubit.fetchQuestions(),
+                    ),
+                  );
+                }
+                return SizedBox();
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+
+import '../../../../core/utils/app_style.dart';
+
+class EmptyStateWidget extends StatelessWidget {
+  const EmptyStateWidget({super.key, required Future<void> Function() onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.search_off, size: 60, color: Colors.grey[300]),
+          const SizedBox(height: 16),
+          Text('لا توجد نتائج للبحث', style: AppStyle.styleMedium20(context)),
+          const SizedBox(height: 8),
+          Text(
+            'حاول استخدام كلمات بحث مختلفة',
+            style: AppStyle.styleRegular14(
+              context,
+            ).copyWith(color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../../../../core/constants/color_app.dart';
+import '../../../../core/utils/app_style.dart';
+import '../../domain/entities/question.dart';
+import '../views/question_details_page.dart';
+
+class QuestionCard extends StatelessWidget {
+  final Question question;
+  const QuestionCard({super.key, required this.question});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap:
+          () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => QuestionDetailsPage(question: question),
+            ),
+          ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.cardColor,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildHeader(context),
+              const SizedBox(height: 8),
+              _buildTitle(context),
+              const SizedBox(height: 12),
+              _buildTags(context),
+              const SizedBox(height: 12),
+              _buildFooter(context),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return Row(
+      children: [
+        if (question.isAnswered)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primaryColor.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              'تمت الإجابة',
+              style: AppStyle.styleRegular12(
+                context,
+              ).copyWith(color: AppColors.primaryColor),
+            ),
+          ),
+        const Spacer(),
+        Text(
+          DateFormat('yyyy/MM/dd - hh:mm a').format(question.creationDate),
+          style: AppStyle.styleRegular12(context).copyWith(color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTitle(BuildContext context) {
+    return Text(
+      question.title,
+      style: AppStyle.styleSemiBold16(context),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.right,
+    );
+  }
+
+  Widget _buildTags(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children:
+          question.tags.map((tag) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                tag,
+                style: AppStyle.styleRegular12(
+                  context,
+                ).copyWith(color: AppColors.primaryColor),
+              ),
+            );
+          }).toList(),
+    );
+  }
+
+  Widget _buildFooter(BuildContext context) {
+    return Row(
+      children: [
+        // المستخدم
+        Expanded(
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 12,
+                backgroundColor: Colors.grey[200],
+                child: Text(
+                  question.ownerName.substring(0, 1),
+                  style: AppStyle.styleRegular12(context),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(question.ownerName, style: AppStyle.styleRegular12(context)),
+            ],
+          ),
+        ),
+        // الإحصائيات
+        Row(
+          children: [
+            _buildStatItem(Icons.thumbs_up_down, question.score),
+            const SizedBox(width: 12),
+            _buildStatItem(
+              Icons.comment,
+              question.answerCount,
+              isAnswered: question.isAnswered,
+            ),
+            const SizedBox(width: 12),
+            _buildStatItem(Icons.remove_red_eye, question.viewCount),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatItem(IconData icon, int count, {bool isAnswered = false}) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          size: 16,
+          color: isAnswered ? AppColors.primaryColor : Colors.grey,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          count.toString(),
+          style: TextStyle(
+            color: isAnswered ? AppColors.primaryColor : Colors.black,
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import '../../../../core/utils/app_style.dart';
+import '../../domain/entities/question.dart';
+
+class QuestionBody extends StatelessWidget {
+  final Question question;
+  const QuestionBody({super.key, required this.question});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 5)],
+      ),
+      child: Text(
+        question.body ?? '',
+        style: AppStyle.styleRegular14(context),
+        textAlign: TextAlign.right,
+      ),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import '../../domain/entities/question.dart';
+import 'question_card.dart';
+
+class QuestionListView extends StatefulWidget {
+  final List<Question> questions;
+  final VoidCallback? onLoadMore;
+
+  const QuestionListView({super.key, required this.questions, this.onLoadMore});
+
+  @override
+  State<QuestionListView> createState() => _QuestionListViewState();
+}
+
+class _QuestionListViewState extends State<QuestionListView> {
+  final ScrollController _scrollController = ScrollController();
+  bool _isLoadingMore = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScroll);
+  }
+
+  void _handleScroll() {
+    if (_scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent - 200 &&
+        !_isLoadingMore) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (widget.onLoadMore == null) return;
+
+    setState(() => _isLoadingMore = true);
+    widget.onLoadMore!();
+    setState(() => _isLoadingMore = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    print('📱 QuestionListView: بناء قائمة بـ ${widget.questions.length} سؤال');
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.separated(
+            controller: _scrollController,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            itemCount: widget.questions.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              print(
+                '📱 QuestionListView: بناء السؤال رقم $index: ${widget.questions[index].title}',
+              );
+              return QuestionCard(question: widget.questions[index]);
+            },
+          ),
+        ),
+        if (_isLoadingMore)
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: CircularProgressIndicator(),
+          ),
+      ],
+    );
+  }
+}
+import 'package:flutter/material.dart';
+
+import '../../../../core/utils/app_style.dart';
+import 'filter_button.dart';
+
+class SearchAndFilterBar extends StatelessWidget {
+  final TextEditingController controller;
+  final String selectedFilter;
+  final Function(String) onFilterChanged;
+
+  const SearchAndFilterBar({
+    super.key,
+    required this.controller,
+    required this.selectedFilter,
+    required this.onFilterChanged, required void Function() onSearchTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          TextFormField(
+            controller: controller,
+            decoration: InputDecoration(
+              hintText: 'ابحث في الأسئلة....',
+
+              hintStyle: AppStyle.styleRegular14(
+                context,
+              ).copyWith(color: Colors.grey),
+              prefixIcon: const Icon(Icons.search),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              filled: true,
+              fillColor: Colors.grey[100],
+              contentPadding: const EdgeInsets.symmetric(
+                vertical: 12,
+                horizontal: 12,
+              ),
+            ),
+            textDirection: TextDirection.rtl,
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                FilterButton(
+                  label: 'الأحدث',
+                  icon: Icons.access_time,
+                  selected: selectedFilter,
+                  onTap: onFilterChanged,
+                ),
+                FilterButton(
+                  label: 'الأكثر تصويتاً',
+                  icon: Icons.thumb_up,
+                  selected: selectedFilter,
+                  onTap: onFilterChanged,
+                ),
+                FilterButton(
+                  label: 'الأكثر إجابة',
+                  icon: Icons.comment,
+                  selected: selectedFilter,
+                  onTap: onFilterChanged,
+                ),
+                FilterButton(
+                  label: 'الأكثر مشاهدة',
+                  icon: Icons.remove_red_eye,
+                  selected: selectedFilter,
+                  onTap: onFilterChanged,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

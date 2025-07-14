@@ -1,7 +1,6 @@
-// questions_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-
+import 'dart:developer';
 import '../../domain/entities/question.dart';
 import '../manager/question/question_cubit.dart';
 import '../widgets/empty_state_widget.dart';
@@ -32,11 +31,8 @@ class _QuestionsPageState extends State<QuestionsPage> {
   }
 
   Future<void> _loadInitialData() async {
-    print('📱 QuestionsPage: بدء تحميل البيانات من الإنترنت أولاً');
-    // محاولة جلب البيانات من الإنترنت أولًا
+    log('📱 QuestionsPage: بدء تحميل البيانات من الإنترنت أولاً');
     await _questionCubit.fetchQuestions(isRefresh: true);
-
-    // ثم تحديث عدد البيانات المحلية (إن وُجدت)
     _updateLocalDataCount();
   }
 
@@ -49,7 +45,7 @@ class _QuestionsPageState extends State<QuestionsPage> {
 
   void _showLocalDataInfo() {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+      const SnackBar(
         content: Text('تم تحميل البيانات من التخزين المحلي'),
         duration: Duration(seconds: 2),
         backgroundColor: Colors.blue,
@@ -62,16 +58,16 @@ class _QuestionsPageState extends State<QuestionsPage> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: Text('تأكيد المسح'),
-            content: Text('هل تريد مسح جميع البيانات المحلية؟'),
+            title: const Text('تأكيد المسح'),
+            content: const Text('هل تريد مسح جميع البيانات المحلية؟'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: Text('إلغاء'),
+                child: const Text('إلغاء'),
               ),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(true),
-                child: Text('مسح'),
+                child: const Text('مسح'),
               ),
             ],
           ),
@@ -81,7 +77,7 @@ class _QuestionsPageState extends State<QuestionsPage> {
       await _questionCubit.clearLocalData();
       _updateLocalDataCount();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           content: Text('تم مسح البيانات المحلية'),
           backgroundColor: Colors.red,
         ),
@@ -143,18 +139,24 @@ class _QuestionsPageState extends State<QuestionsPage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('أسئلة Stack Overflow'),
+            const Text('أسئلة Stack Overflow'),
             if (_localDataCount > 0)
               Text(
                 'البيانات المحلية: $_localDataCount',
-                style: TextStyle(fontSize: 12, color: Colors.white70),
+                style: const TextStyle(fontSize: 12, color: Colors.white70),
               ),
           ],
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.storage),
-            onPressed: () => _questionCubit.fetchQuestions(fromLocal: true),
+            onPressed: () async {
+              await _questionCubit.fetchQuestions(
+                fromLocal: true,
+                isRefresh: true,
+              );
+              _updateLocalDataCount();
+            },
             tooltip: 'تحميل البيانات المحلية',
           ),
           IconButton(
@@ -173,45 +175,56 @@ class _QuestionsPageState extends State<QuestionsPage> {
             onFilterChanged: _applyFilter,
             onSearchTap: () => setState(() => _isSearchActive = false),
           ),
+          if (_questionCubit.isLastFetchFromLocal)
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text(
+                'عرض البيانات من التخزين المحلي (غير متصل)',
+                style: TextStyle(color: Colors.blue),
+              ),
+            ),
           Expanded(
             child: BlocConsumer<QuestionCubit, QuestionState>(
               listener: (context, state) {
-                print(
-                  '📱 QuestionsPage: تغيير الحالة إلى: ${state.runtimeType}',
-                );
+                log('📱 QuestionsPage: الحالة الحالية: $state');
                 if (state is QuestionError) {
                   ScaffoldMessenger.of(
                     context,
                   ).showSnackBar(SnackBar(content: Text(state.message)));
                 } else if (state is QuestionLoaded) {
                   if (_questionCubit.isLastFetchFromLocal) {
-                    _showLocalDataInfo(); 
+                    _showLocalDataInfo();
                   }
                 }
               },
               builder: (context, state) {
-              
-                if (state is QuestionLoading) {
+                if (state is QuestionInitial) {
+                  _questionCubit.fetchQuestions(isRefresh: true);
+                  return const Center(child: CircularProgressIndicator());
+                } else if (state is QuestionLoading) {
                   return ListView.builder(
                     itemCount: 5,
                     itemBuilder:
-                        (_, index) => Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: const SkeletonQuestionCard(),
+                        (_, index) => const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: SkeletonQuestionCard(),
                         ),
                   );
                 } else if (state is QuestionSearching) {
-                  return Center(child: CircularProgressIndicator());
+                  return const Center(child: CircularProgressIndicator());
                 } else if (state is QuestionEmpty) {
                   return EmptyStateWidget(
                     onRetry:
                         () => _questionCubit.fetchQuestions(isRefresh: true),
                   );
-                } else if (state is QuestionLoaded) {
-                  final sorted = _applySort(state.questions);
-                  print(
-                    '📱 QuestionsPage: بناء قائمة بـ ${state.questions.length} سؤال',
-                  );
+                } else if (state is QuestionLoaded ||
+                    state is QuestionLoadingMore) {
+                  final questions =
+                      state is QuestionLoaded
+                          ? state.questions
+                          : (state as QuestionLoadingMore).questions;
+                  final sorted = _applySort(questions);
+                  log('📱 QuestionsPage: عرض ${sorted.length} سؤال');
                   return RefreshIndicator(
                     onRefresh: _refreshData,
                     child: QuestionListView(
@@ -220,7 +233,7 @@ class _QuestionsPageState extends State<QuestionsPage> {
                     ),
                   );
                 }
-                return SizedBox();
+                return const Center(child: Text('حالة غير متوقعة'));
               },
             ),
           ),
